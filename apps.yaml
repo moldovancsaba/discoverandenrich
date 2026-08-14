@@ -1,0 +1,42 @@
+# Apps — the third-party applications this service delivers research into.
+#
+# Each entry is an EXTERNAL application with its own repository and deployment.
+# This repo holds only the prompts, schema mapping and config needed to write
+# into them; no source from either application lives here, and their schemas are
+# mirrored rather than imported so this repo builds and tests standalone.
+#
+# Each app groups tenants that share the same API, schema, and verification logic.
+# Adding a new app = a new third-party consumer to serve.
+# Adding a new tenant = new client within an existing app -- add it to the
+# `tenants` list below AND give it a tenants.json entry with a matching
+# `schemaFamily` ('sales-lead-api' for this app today); schema-mapper.js
+# dispatches on that field, never on the tenant's own name/ID, so no code
+# change is needed for a same-family tenant.
+
+apps:
+  salesleadgenerator:
+    appId: salesleadgenerator
+    displayName: SalesLeadGenerator
+    description: Sales-lead research for salesleadgenerator's brands (separate repo, https://salesleadgenerator.vercel.app)
+    tenants: [cogmap, seyu, dvsc]
+    verifier: runtime/verifier/list-based.js
+    schemaMapper: schema-mapper.js
+    healthCheckTemplate: "GET /api/leads?brand={{tenant}}&limit=1"
+    maxResultsPerRun: 5
+    requireDecisionMaker: true
+
+  # A separate app: classscout targets a structurally different API (classscout's own
+  # POST /api/ingest batch-operations endpoint, not salesleadgenerator's /api/leads), so
+  # it does not share the salesleadgenerator app's verifier/healthCheckTemplate above.
+  # schemaMapper.js is still the shared file -- it dispatches per-tenant on schemaFamily
+  # ('program-api' here), same pattern as the salesleadgenerator app.
+  classscout:
+    appId: classscout
+    displayName: ClassScout
+    description: NYC kids-activity provider research for classscout's catalog (separate repo, https://classscout.ai)
+    tenants: [classscout]
+    verifier: runtime/verifier/response-based.js
+    schemaMapper: schema-mapper.js
+    healthCheckTemplate: "GET /api/ingest"
+    maxResultsPerRun: 5
+    requireDecisionMaker: false
