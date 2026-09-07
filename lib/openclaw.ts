@@ -76,7 +76,17 @@ export type Proposal = {
   id: string
   severity: string
   scope: string
+  /** From applied-markers.txt only: `applied` or `open`. NOT the human verdict. */
   status: string
+  /** The human verdict line, which is tracked separately from status and is the reason a
+   *  rejected proposal still reads `open`. A page that filters on status alone shows a
+   *  decided item forever. */
+  verdict: "approved" | "rejected" | "undecided"
+  /** Only an auto-applicable LOOP proposal can be applied by the loop. For a HUMAN or REPO
+   *  proposal there is nothing to approve: the apply job would write a guidance rule for
+   *  work the agent must not do, and then mark the finding applied while the number that
+   *  produced it has not moved. */
+  autoApplicable: boolean
   finding: string
   why: string
   action: string
@@ -98,10 +108,18 @@ export function parseProposals(md: string): Proposal[] {
       return m ? m[1].trim() : ""
     }
     const scope = b.match(/scope: \*\*(\w+)\*\*/)
+    const auto = /auto-applicable: \*\*True\*\*/.test(b)
+    const verdict: Proposal["verdict"] = /\*\*REJECTED by you/.test(b)
+      ? "rejected"
+      : /\*\*APPROVED by you/.test(b)
+        ? "approved"
+        : "undecided"
     out.push({
       severity: head[1],
       id: head[2],
       status: head[3],
+      verdict,
+      autoApplicable: auto,
       scope: scope ? scope[1] : "",
       finding: field("finding"),
       why: field("why matters") || field("why it matters"),

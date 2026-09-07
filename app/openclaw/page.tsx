@@ -10,7 +10,20 @@ type Run = { at: string; delivered: number | null; secs?: number; output?: strin
 type Job = { app: string; client: string; operation: string; enabled: boolean }
 type Proposal = {
   id: string; severity: string; scope: string; status: string
+  verdict: "approved" | "rejected" | "undecided"
+  autoApplicable: boolean
   finding: string; why: string; action: string
+}
+
+/** Where the work for a HUMAN-scoped proposal actually happens. There is nothing for the
+ *  loop to apply, so the honest button is a link, not an Approve. */
+const WORK_LINK: Record<string, { href: string; label: string }> = {
+  "cogmap-review-rate": { href: "https://salesleadgenerator.vercel.app/", label: "Review cogmap leads" },
+  "dvsc-review-rate": { href: "https://salesleadgenerator.vercel.app/", label: "Review dvsc leads" },
+  "cogmap-duplicates": { href: "https://salesleadgenerator.vercel.app/admin/duplicates", label: "cogmap duplicates" },
+  "seyu-duplicates": { href: "https://salesleadgenerator.vercel.app/admin/duplicates", label: "seyu duplicates" },
+  "NYC-duplicates": { href: "https://classscout.ai/nyc", label: "classscout NYC" },
+  "padel-africa-fabricated-urls": { href: "https://padel-africa.vercel.app/", label: "padel-africa" },
 }
 type Snapshot = {
   workspace: string
@@ -103,7 +116,11 @@ export default function OpenClawAdmin() {
   const jobs = isUnread(s.jobs) ? null : s.jobs.jobs
   const runs = isUnread(s.runs) ? null : s.runs
   const proposals = isUnread(s.proposals) ? null : s.proposals
-  const open = proposals?.filter((p) => p.status === "open") ?? []
+  // status comes from applied-markers.txt and does NOT change when you decide. Filtering on
+  // it alone kept a rejected proposal in this list forever, which is how a queue stops
+  // meaning anything.
+  const open = proposals?.filter((p) => p.status === "open" && p.verdict === "undecided") ?? []
+  const decided = proposals?.filter((p) => p.verdict !== "undecided" && p.status === "open") ?? []
 
   return (
     <main className="min-h-screen bg-gray-50">
@@ -182,30 +199,108 @@ export default function OpenClawAdmin() {
                   </div>
                   <p className="text-sm text-gray-800">{p.finding}</p>
                   {p.action && <p className="mt-1 text-sm text-gray-600">→ {p.action}</p>}
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      disabled={busy === p.id}
-                      onClick={() => decide(p.id, "approve")}
-                      className="rounded bg-gray-900 px-3 py-1 text-sm text-white disabled:opacity-40"
-                    >
-                      Approve
-                    </button>
-                    <button
-                      disabled={busy === p.id}
-                      onClick={() => decide(p.id, "reject")}
-                      className="rounded border px-3 py-1 text-sm disabled:opacity-40"
-                    >
-                      Reject
-                    </button>
-                    <span className="self-center text-xs text-gray-400">
-                      writes a stamped line to approvals.txt; the hourly apply job picks it up
-                    </span>
+
+                  {/* What each button DOES. Without this the page offers a decision whose
+                      consequence the reader cannot know -- and for a HUMAN-scoped item
+                      Approve is actively wrong: the apply job would write a guidance rule
+                      for work the agent must never do, then mark the finding applied while
+                      the number that produced it has not moved. */}
+                  <div className="mt-3 rounded bg-gray-50 p-3">
+                    {p.autoApplicable ? (
+                      <>
+                        <p className="text-xs text-gray-600">
+                          <b>Approve</b> → the hourly apply job adds this as a rule in{" "}
+                          <code>TOOLS.md</code> under “Loop improvements”, marks it applied,
+                          and it leaves this list. The loop follows it from then on.
+                          <br />
+                          <b>Reject</b> → recorded as your decision; never applied, and it
+                          stops being re-proposed.
+                        </p>
+                        <div className="mt-2 flex gap-2">
+                          <button
+                            disabled={busy === p.id}
+                            onClick={() => decide(p.id, "approve")}
+                            className="rounded bg-gray-900 px-3 py-1 text-sm text-white disabled:opacity-40"
+                          >
+                            Approve
+                          </button>
+                          <button
+                            disabled={busy === p.id}
+                            onClick={() => decide(p.id, "reject")}
+                            className="rounded border px-3 py-1 text-sm disabled:opacity-40"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-xs text-gray-600">
+                          <b>Nothing here can be approved.</b> This is {p.scope}-scoped: the
+                          work is yours, not the loop’s, and there is no change for it to
+                          apply. Approving would only write a rule telling the agent to do
+                          something it must not do, then mark this finding “applied” while
+                          the number that produced it stayed exactly the same.
+                          <br />
+                          <b>Dismiss</b> → records your decision and stops it being
+                          re-proposed. Use it when you have done the work, or decided not to.
+                          The measurement will raise it again if it worsens.
+                        </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {WORK_LINK[p.id] && (
+                            <a
+                              href={WORK_LINK[p.id].href}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="rounded bg-gray-900 px-3 py-1 text-sm text-white"
+                            >
+                              Do it → {WORK_LINK[p.id].label}
+                            </a>
+                          )}
+                          <button
+                            disabled={busy === p.id}
+                            onClick={() => decide(p.id, "reject")}
+                            className="rounded border px-3 py-1 text-sm disabled:opacity-40"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
+                      </>
+                    )}
                   </div>
                 </li>
               ))}
             </ul>
           )}
         </section>
+
+        {/* Decided, but the measurement still stands. Shown rather than hidden: a rejected
+            finding whose number has not moved is worth seeing, and hiding it is how a
+            report starts flattering the reader. */}
+        {decided.length > 0 && (
+          <section className="mb-8">
+            <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+              Decided by you, still measured ({decided.length})
+            </h2>
+            <ul className="space-y-1">
+              {decided.map((p) => (
+                <li key={p.id} className="rounded border bg-white px-3 py-2 text-sm">
+                  <span
+                    className={`mr-2 rounded px-1.5 py-0.5 text-xs ${
+                      p.verdict === "rejected"
+                        ? "bg-gray-200 text-gray-700"
+                        : "bg-green-100 text-green-800"
+                    }`}
+                  >
+                    {p.verdict}
+                  </span>
+                  <span className="font-mono text-xs">{p.id}</span>
+                  <span className="ml-2 text-gray-600">{p.finding}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         {/* ------------------------------------------------------------------- jobs */}
         <section className="mb-8">
