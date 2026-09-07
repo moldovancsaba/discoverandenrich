@@ -180,6 +180,101 @@ function Maintenance({ onDone }: { onDone: () => void }) {
   )
 }
 
+
+/** What a person knows about this record, that no page we can fetch will tell us.
+ *
+ *  Enrichment reads it on the next pass. A value found in the note is written and
+ *  attributed `user` -- never `official`, because the organisation's own page did not say
+ *  it. A value in neither the page nor the note is still refused: a note is evidence, not
+ *  a licence to write anything. */
+function NoteBox({ client, id, name }: { client: string; id: string; name?: string }) {
+  const [open, setOpen] = useState(false)
+  const [existing, setExisting] = useState<any>(null)
+  const [text, setText] = useState("")
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    fetch(`/api/openclaw/note?client=${encodeURIComponent(client)}&id=${encodeURIComponent(id)}`)
+      .then((r) => r.json())
+      .then((d) => setExisting(d.note))
+      .catch(() => setExisting(null))
+  }, [open, client, id])
+
+  async function save() {
+    setSaving(true)
+    setMsg(null)
+    try {
+      const r = await fetch("/api/openclaw/note", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ client, id, name, text }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setText("")
+      setMsg("saved — the next enrichment pass on this record will read it")
+      const rr = await fetch(
+        `/api/openclaw/note?client=${encodeURIComponent(client)}&id=${encodeURIComponent(id)}`
+      )
+      setExisting((await rr.json()).note)
+    } catch (e) {
+      setMsg((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="mt-1">
+      <button
+        onClick={() => setOpen(!open)}
+        className="rounded border px-2 py-0.5 text-xs"
+      >
+        {open ? "Hide note" : "Add / view note"}
+      </button>
+      {open && (
+        <div className="mt-1 rounded border bg-gray-50 p-2">
+          {existing?.text && (
+            <div className="mb-2">
+              <div className="text-[11px] font-semibold uppercase text-gray-500">
+                on record
+              </div>
+              <pre className="whitespace-pre-wrap text-[11px] text-gray-700">
+                {existing.text}
+              </pre>
+              {existing.used?.length > 0 && (
+                <div className="mt-1 text-[11px] text-green-700">
+                  used by a job: {existing.used[existing.used.length - 1].fields.join(", ")}{" "}
+                  on {existing.used[existing.used.length - 1].at}
+                </div>
+              )}
+            </div>
+          )}
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            rows={5}
+            placeholder={"Paste what you found — phone numbers, an email, a new address, socials.\nThe next enrichment pass reads this and may write values from it, attributed to you."}
+            className="w-full rounded border p-2 text-xs"
+          />
+          <div className="mt-1 flex items-center gap-2">
+            <button
+              disabled={saving || text.trim().length < 3}
+              onClick={save}
+              className="rounded bg-gray-900 px-3 py-1 text-xs text-white disabled:opacity-40"
+            >
+              {saving ? "Saving…" : "Save note"}
+            </button>
+            {msg && <span className="text-[11px] text-gray-600">{msg}</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 type Dead = { url: string; status: string | number; kind?: string; id?: string; name?: string }
 
 /** One dead link, and the three things a person can do about it.
@@ -305,6 +400,7 @@ function DeadLinks({
                 {busy === d.url && <span className="text-xs text-gray-400">working…</span>}
               </div>
             ) : null}
+            {d.id && <NoteBox client={client} id={d.id} name={d.name} />}
             {log[d.url] && (
               <pre className="mt-1 whitespace-pre-wrap rounded bg-gray-50 p-2 text-[11px] text-gray-700">
                 {log[d.url]}
