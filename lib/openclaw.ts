@@ -141,6 +141,27 @@ export type Snapshot = {
   proposalsComputed: string | null
 }
 
+/** Verdicts from approvals.txt, which is the file the human actually writes.
+ *
+ * PROPOSALS.md carries a rendered verdict line too, but it is only rewritten when
+ * propose.py runs -- every six hours. Reading the verdict from there made Dismiss look
+ * like it had done nothing for up to six hours after it had in fact been recorded, which
+ * is indistinguishable from a broken button. */
+export function verdicts(): { approved: Set<string>; rejected: Set<string> } {
+  const approved = new Set<string>()
+  const rejected = new Set<string>()
+  const raw = readText("approvals.txt")
+  if (isUnread(raw)) return { approved, rejected }
+  for (const line of raw.split("\n")) {
+    const t = line.trim()
+    if (!t || t.startsWith("#")) continue
+    const m = t.match(/^(approve|reject)\s+(\S+)/i)
+    if (!m) continue
+    ;(m[1].toLowerCase() === "approve" ? approved : rejected).add(m[2])
+  }
+  return { approved, rejected }
+}
+
 export function snapshot(): Snapshot {
   const proposalsMd = readText("PROPOSALS.md")
   let proposals: Proposal[] | Unread
@@ -148,7 +169,17 @@ export function snapshot(): Snapshot {
   if (isUnread(proposalsMd)) {
     proposals = proposalsMd
   } else {
-    proposals = parseProposals(proposalsMd)
+    const live = verdicts()
+    proposals = parseProposals(proposalsMd).map((p) => ({
+      ...p,
+      // approvals.txt wins over the rendered line: it is what the human wrote, and it is
+      // current the instant they write it.
+      verdict: live.rejected.has(p.id)
+        ? ("rejected" as const)
+        : live.approved.has(p.id)
+          ? ("approved" as const)
+          : p.verdict,
+    }))
     const m = proposalsMd.match(/_last computed ([^_]+)_/)
     computed = m ? m[1].trim() : null
   }

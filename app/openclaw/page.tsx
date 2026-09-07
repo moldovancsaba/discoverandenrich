@@ -70,6 +70,116 @@ function Unreadable({ what }: { what: Unread }) {
   )
 }
 
+type Task = {
+  id: string; label: string; does: string; command: string
+  writes: boolean; dryRunOf?: string
+}
+type RunResult = {
+  id: string; label: string; command: string; cwd: string
+  exitCode: number | null; timedOut: boolean; seconds: number; output: string
+}
+
+/** The maintenance this machine can actually do.
+ *
+ *  These are the workspace's own scripts, run here. Several of them were refused by the
+ *  permission layer of the agent session that built this page; they are not refused on this
+ *  machine, and the work is real. A task that writes to a live customer database asks for
+ *  the task's own name back before it runs, so nothing starts from a stray click. */
+function Maintenance({ onDone }: { onDone: () => void }) {
+  const [tasks, setTasks] = useState<Task[] | null>(null)
+  const [running, setRunning] = useState<string | null>(null)
+  const [result, setResult] = useState<RunResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch("/api/openclaw/run")
+      .then((r) => r.json())
+      .then((d) => setTasks(d.tasks))
+      .catch((e) => setError(String(e)))
+  }, [])
+
+  async function run(t: Task) {
+    if (t.writes) {
+      const typed = window.prompt(
+        `${t.label}\n\n${t.does}\n\nThis writes to a live customer database.\n` +
+          `Type ${t.id} to run it.`
+      )
+      if (typed !== t.id) return
+    }
+    setRunning(t.id)
+    setResult(null)
+    setError(null)
+    try {
+      const r = await fetch("/api/openclaw/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: t.id, confirm: t.writes ? t.id : undefined }),
+      })
+      const d = await r.json()
+      if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+      setResult(d)
+      onDone()
+    } catch (e) {
+      setError((e as Error).message)
+    } finally {
+      setRunning(null)
+    }
+  }
+
+  return (
+    <section className="mb-8">
+      <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide text-gray-500">
+        Maintenance — runs on this machine
+      </h2>
+      {error && <div className="mb-2 rounded bg-red-50 px-3 py-2 text-sm text-red-800">{error}</div>}
+      <div className="grid gap-2 md:grid-cols-2">
+        {(tasks ?? []).map((t) => (
+          <div key={t.id} className="rounded border bg-white p-3">
+            <div className="flex items-center gap-2">
+              <span className="text-sm font-medium text-gray-900">{t.label}</span>
+              {t.writes && (
+                <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs font-semibold text-red-800">
+                  WRITES LIVE
+                </span>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-gray-600">{t.does}</p>
+            <code className="mt-1 block text-[11px] text-gray-400">{t.command}</code>
+            <button
+              disabled={!!running}
+              onClick={() => run(t)}
+              className={`mt-2 rounded px-3 py-1 text-sm disabled:opacity-40 ${
+                t.writes ? "bg-red-700 text-white" : "border"
+              }`}
+            >
+              {running === t.id ? "Running…" : t.dryRunOf ? "Run (read the dry run first)" : "Run"}
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {result && (
+        <div className="mt-3 rounded border bg-white">
+          <div className="border-b px-3 py-2 text-sm">
+            <b>{result.label}</b> — exit {result.exitCode}
+            {result.timedOut && (
+              <span className="ml-2 text-amber-700">
+                stopped on its time limit; that is us stopping early, not a result
+              </span>
+            )}
+            <span className="ml-2 text-gray-400">
+              {result.seconds}s · {result.cwd}
+            </span>
+          </div>
+          <pre className="max-h-80 overflow-auto px-3 py-2 text-xs leading-relaxed text-gray-800">
+            {result.output || "(no output)"}
+          </pre>
+        </div>
+      )}
+    </section>
+  )
+}
+
 export default function OpenClawAdmin() {
   const [s, setS] = useState<Snapshot | null>(null)
   const [err, setErr] = useState<string | null>(null)
@@ -368,6 +478,8 @@ export default function OpenClawAdmin() {
             </div>
           )}
         </section>
+
+        <Maintenance onDone={load} />
 
         {/* ---------------------------------------------------------------- quality */}
         <section className="mb-8">
