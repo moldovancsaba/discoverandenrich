@@ -180,10 +180,148 @@ function Maintenance({ onDone }: { onDone: () => void }) {
   )
 }
 
+type Dead = { url: string; status: string | number; kind?: string; id?: string; name?: string }
+
+/** One dead link, and the three things a person can do about it.
+ *
+ *  The audit has always found these and nothing could act on one, so the same url came back
+ *  every cycle and taught the system nothing. The actions are not interchangeable and the
+ *  page says so: holding is local and works everywhere, clearing withdraws a claim we can no
+ *  longer source, correcting writes a `user` source that outranks anything the pipeline
+ *  resolved. A 403 is usually bot mitigation rather than a dead site, so clearing one is
+ *  refused unless the person insists after looking. */
+function DeadLinks({
+  client,
+  rows,
+  onDone,
+}: {
+  client: string
+  rows: Dead[]
+  onDone: () => void
+}) {
+  const [busy, setBusy] = useState<string | null>(null)
+  const [log, setLog] = useState<Record<string, string>>({})
+
+  async function act(d: Dead, action: "hold" | "clear" | "set") {
+    if (!d.id) return
+    let value = ""
+    let force = false
+    if (action === "hold") {
+      value = window.prompt(`Hold “${d.name}”?\n\nWhy? This is the only record of the reason.`) || ""
+      if (!value.trim()) return
+    }
+    if (action === "set") {
+      value = window.prompt(`Correct url for “${d.name}”`, d.url) || ""
+      if (!/^https?:\/\//.test(value)) return
+    }
+    if (action === "clear") {
+      const s = String(d.status)
+      if (/^\d+$/.test(s) && s !== "404" && s !== "410" && Number(s) < 500) {
+        force = window.confirm(
+          `${d.url} answered ${s}.\n\nThat is usually bot mitigation, not a dead site — ` +
+            `it may well work in a browser. Clear it anyway?`
+        )
+        if (!force) return
+      } else if (!window.confirm(`Clear the url on “${d.name}”?`)) return
+    }
+    setBusy(d.url)
+    try {
+      const r = await fetch("/api/openclaw/deadlink", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          client, id: d.id, name: d.name, url: d.url, status: String(d.status),
+          action, value, force, apply: true,
+        }),
+      })
+      const j = await r.json()
+      setLog((l) => ({ ...l, [d.url]: j.output || j.error || "no output" }))
+      if (j.applied) onDone()
+    } catch (e) {
+      setLog((l) => ({ ...l, [d.url]: (e as Error).message }))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const needsRescan = rows.some((d) => !d.id)
+
+  return (
+    <div className="mt-3 rounded border bg-white">
+      <div className="border-b px-3 py-2 text-sm font-medium">
+        {client} — {rows.length} dead link{rows.length === 1 ? "" : "s"}
+      </div>
+      {needsRescan && (
+        <div className="border-b bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          Some rows have no record attached — this finding predates the audit carrying the
+          record. Run <b>Re-measure quality</b> above, then reopen this list.
+        </div>
+      )}
+      <ul className="divide-y">
+        {rows.map((d) => (
+          <li key={d.url} className="px-3 py-2 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
+                  d.kind === "gone"
+                    ? "bg-red-100 text-red-800"
+                    : d.kind === "refused-us"
+                      ? "bg-blue-100 text-blue-800"
+                      : "bg-yellow-100 text-yellow-800"
+                }`}
+                title={
+                  d.kind === "gone"
+                    ? "the server says there is nothing there — a fact about the site"
+                    : d.kind === "refused-us"
+                      ? "it refused THIS MACHINE. Very likely alive in a browser — check before clearing"
+                      : d.kind === "unreachable"
+                        ? "three transport failures. That is a statement about us, not about them"
+                        : "an error response"
+                }
+              >
+                {String(d.status)}
+                {d.kind === "refused-us" && " · refused us"}
+                {d.kind === "unreachable" && " · not reached"}
+              </span>
+              <span className="font-medium">{d.name || "(record unknown)"}</span>
+              <a href={d.url} target="_blank" rel="noreferrer" className="text-blue-700 underline">
+                {d.url.slice(0, 64)}
+              </a>
+            </div>
+            {d.id ? (
+              <div className="mt-1 flex gap-2">
+                <button disabled={!!busy} onClick={() => act(d, "set")}
+                  className="rounded border px-2 py-0.5 text-xs disabled:opacity-40">
+                  Fix url
+                </button>
+                <button disabled={!!busy} onClick={() => act(d, "clear")}
+                  className="rounded border px-2 py-0.5 text-xs disabled:opacity-40">
+                  Clear url
+                </button>
+                <button disabled={!!busy} onClick={() => act(d, "hold")}
+                  className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-800 disabled:opacity-40">
+                  Quarantine listing
+                </button>
+                {busy === d.url && <span className="text-xs text-gray-400">working…</span>}
+              </div>
+            ) : null}
+            {log[d.url] && (
+              <pre className="mt-1 whitespace-pre-wrap rounded bg-gray-50 p-2 text-[11px] text-gray-700">
+                {log[d.url]}
+              </pre>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
+}
+
 export default function OpenClawAdmin() {
   const [s, setS] = useState<Snapshot | null>(null)
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [openDead, setOpenDead] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     try {
@@ -513,7 +651,18 @@ export default function OpenClawAdmin() {
                         )}
                       </td>
                       <td className="px-3 py-2">
-                        {(f.deadlinks?.length ?? 0)} of {f.deadlink_probed ?? 0}
+                        {(f.deadlinks?.length ?? 0) > 0 ? (
+                          <button
+                            onClick={() => setOpenDead(openDead === t ? null : t)}
+                            className="underline decoration-dotted underline-offset-2"
+                          >
+                            {f.deadlinks.length} of {f.deadlink_probed ?? 0}
+                          </button>
+                        ) : (
+                          <span className="text-gray-400">
+                            0 of {f.deadlink_probed ?? 0}
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2">{f.placeholder_count ?? 0}</td>
                     </tr>
@@ -521,6 +670,13 @@ export default function OpenClawAdmin() {
                 </tbody>
               </table>
             </div>
+          )}
+          {openDead && !isUnread(s.quality) && (
+            <DeadLinks
+              client={openDead}
+              rows={s.quality.tenants[openDead]?.deadlinks ?? []}
+              onDone={load}
+            />
           )}
         </section>
 
