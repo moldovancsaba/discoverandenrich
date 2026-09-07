@@ -19,3 +19,6 @@ tsconfig.tsbuildinfo
 # that is already tracked, which is how five of them reached the remote.
 .env*
 !.env*.example
+
+# local agent tooling, not part of the app
+.claude/
