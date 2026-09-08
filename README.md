@@ -254,7 +254,12 @@ routes carry no authentication of their own, and this repository is public and f
 projects. The reasoning, and the first version of the guard that silently guarded nothing, are
 in `docs/RUNTIME_ARCHITECTURE_NOTES.md` §21.
 
-Run it locally with `npm run dev` and open `http://localhost:3000/openclaw`.
+On the OpenClaw host it is **always on**: launchd runs it as `ai.openclaw.admin`, bound to
+127.0.0.1:3000, started at login and restarted on crash. Open
+`http://localhost:3000/openclaw`; nothing needs to be launched first. The launcher, logs and
+an operator README are in `/Users/Shared/Projects/OpenClaw/tools/openclaw-admin/`. Running
+`npm run dev` by hand there while the service is up lands on port 3001 — use the service, and
+restart it with `launchctl kickstart -k gui/$(id -u)/ai.openclaw.admin` if it looks stale.
 
 ## Prohibited
 
