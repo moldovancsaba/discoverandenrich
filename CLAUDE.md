@@ -100,11 +100,31 @@ self-invent new issues to stay busy; work the real backlog, and file a
 real, well-scoped issue (matching the structure of #6/#7/#8) when new
 follow-up work is discovered as an outcome of what you were already doing.
 
-No GitHub Projects (v2) board API is available in this session's
-toolset — issues can be created/labeled via the API, but cannot be added
-to a project board programmatically. State this plainly whenever asked
-for one; hand off the "add to board" step to whoever has board access
-rather than claiming it was done.
+Whether the GitHub Projects (v2) board API is usable depends on the scopes
+of the `gh` token the session actually holds — check rather than assume, in
+either direction. `gh auth status` lists them; look for `project`. Verified
+2026-09-08: the scope is present, `gh project list --owner moldovancsaba`
+works, and boards were renamed and had their Status options rewritten
+through the GraphQL API that day. This paragraph used to state flatly that
+no board API was available, which had stopped being true and would have had
+a session hand off work it could do itself.
+
+Without the `project` scope, issues can still be created and labeled but
+cannot be added to a board programmatically. Say so plainly in that case
+and hand off the "add to board" step rather than claiming it was done.
+
+**Board convention (owner's standing rule): one repository, exactly one
+project board.** Never create a second board for a repo — no epic,
+adoption, feature or scratch boards. If something needs tracking it becomes
+an item, or at most a column, on the one board. Boards are named
+`{repo} - From IDEA to LIVE`, and each carries the same Status options in
+this order: `IDEABANK (SOMEDAY)`, `Roadmap (LATER)`, `Backlog (SOONER)`,
+`Todo (NEXT)`, `In Progress (NOW)`, `Review (ALMOST)`, `Done`,
+`Declined (NEVER)`. When bringing a board into line, rename existing
+options **in place** by passing their existing `id` to
+`updateProjectV2Field` — options are matched by id, so renaming that way
+keeps every item's status, while replacing the option set loses them. This
+repo's board is https://github.com/users/moldovancsaba/projects/57.
 
 ## AI Attribution & Branding Policy (Owner Directive 2026-07-31)
 

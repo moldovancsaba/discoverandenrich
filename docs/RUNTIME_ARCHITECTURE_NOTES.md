@@ -1278,3 +1278,20 @@ both the page and the API, GET and POST; `/` and `/api/health` are untouched.
 running that suite with `middleware.ts` removed: identical failure. The six repo-level gates
 (`verify-schema-mapper`, `verify-cron-generator`, `verify-runtime`, `verify-prompt-parity`,
 `verify-runners`, `cron-generator --check`) all pass.
+
+**Resolved later the same day: the install was corrupt, not the dependency.** `package.json`
+asks for `^1.29.0`, the lockfile pins `1.30.0`, and `node_modules` held `1.30.0` — all three
+agreed, so this never looked like a version conflict. The extracted copy was simply
+incomplete: `dist/esm/shared/` contained every sibling file and not `mediaType.js`, which
+its own `streamableHttp.js` imports on line 1. A truncated extraction, not a published
+build error. `npm ci` inside `search-router/seyu-search-router` restored it, changing no
+manifest — the lockfile and `package.json` are byte-identical after. **`npm test` now
+passes end to end: 42 tests, 0 failures.**
+
+Worth keeping for the diagnosis, not the fix: the error names a missing file inside a
+dependency, which reads like the dependency is broken and sends you to version ranges and
+release notes. The question that settled it in one command was narrower — *does this file
+exist in the install, and do the manifests disagree?* They did not disagree, so nothing was
+wrong with what was requested, only with what arrived. A missing file inside `node_modules`
+with consistent manifests means reinstall, and `npm ci` is the reinstall that cannot
+silently change what you asked for.
