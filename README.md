@@ -240,7 +240,21 @@ The cron-generator reads these flags to include/exclude operations in the cron s
 
 Deployed on Vercel as a Next.js App Router project. The `vercel.json` is empty (`{}`) so Vercel auto-detects the framework. The build command is `next build` and the dev command is `next dev`.
 
-The deployed app is minimal: a static landing page at `/` and `GET /api/health`. `GET /api/leads` is a local stub/mock only. There is no admin UI and no admin API — see "The `/admin` dashboard was removed" above.
+The deployed app is minimal: a static landing page at `/` and `GET /api/health`. `GET /api/leads` is a local stub/mock only.
+
+### `/openclaw` is local-only, and enforced
+
+The repo carries an OpenClaw admin page (`app/openclaw/`, `app/api/openclaw/*`) that reads the
+workspace at `lib/openclaw.ts`'s `WORKSPACE` and runs allowlisted maintenance tasks against it
+with `python3`. **It only works on the machine holding that workspace**, and `middleware.ts`
+answers 404 to `/openclaw` and `/api/openclaw/*` on anything that is not a local request.
+
+Do not "fix" that 404 on a deployment. Two of its tasks write to live customer databases, the
+routes carry no authentication of their own, and this repository is public and feeds two Vercel
+projects. The reasoning, and the first version of the guard that silently guarded nothing, are
+in `docs/RUNTIME_ARCHITECTURE_NOTES.md` §21.
+
+Run it locally with `npm run dev` and open `http://localhost:3000/openclaw`.
 
 ## Prohibited
 

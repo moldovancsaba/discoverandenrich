@@ -1223,3 +1223,58 @@ Three behaviours are now distinguished, and the earlier single
 | backfilled | empty accepted and stored | emit empty |
 | reject-if-empty (`ice`) | empty fails the whole write | omit unless real |
 | superseded (the four) | ignored; `contacts[]` carries the data | emit, exclude from measurement |
+
+## 21. The admin page shipped public and unguarded, and the first guard guarded nothing (2026-09-08)
+
+`/openclaw` and `app/api/openclaw/*` were built over five commits and pushed to `main`.
+This repository is **public**, and GitHub's deployment record shows it feeds **two** Vercel
+projects — `contentcreator` and `researchandenrich` — both of which had last deployed from
+the commit that push replaced. So the push put an admin page on two public origins.
+
+**What was actually exposed.** The write paths are inert on a hosted deployment, but only by
+accident: `lib/openclaw.ts` pins `WORKSPACE` to `/Users/Shared/Projects/OpenClaw/.openclaw/workspace`,
+which does not exist there, so `execFile("python3", …)` fails. A hardcoded path is not a
+security control — one `OPENCLAW_WORKSPACE` environment variable would have turned the public
+page into a live control panel over the customer databases.
+
+One route needed no accident to leak. `GET /api/openclaw/run` touches no filesystem at all: it
+returns the whole maintenance task table from `lib/tasks.ts`, commands included, to any caller.
+That was publicly readable from the moment either project rebuilt.
+
+The argv allowlist and the confirm-token gate in `run/route.ts` both hold and were never the
+problem. They gate **what** may run. Nothing gated **who** may ask.
+
+**The fix is a refusal, not a password.** `middleware.ts` answers 404 to `/openclaw` and
+`/api/openclaw/*` unless the request is genuinely local. A shared secret would have left a
+working admin surface on a public URL and invited someone to finish wiring it up later; a hard
+refusal means a public deployment cannot become a control panel by setting one variable. 404
+rather than 403 because 403 confirms the surface exists — the routes are readable in this
+public repo either way, but a prober should not learn which deployment has a workspace behind it.
+
+**The finding worth keeping: the first version of that middleware guarded nothing.** It tested
+`req.nextUrl.hostname` against a loopback set, which reads correctly and is wrong. Measured
+against `next dev`: `nextUrl.hostname` is the address the server is **listening** on, not the
+host the request **asked for**. It stayed `"localhost"` for a request carrying
+`Host: example.com`, so every spoofed host was served a 200 — including the task table. The
+check passed its own reading and would have passed review; what caught it was sending the
+request a deployment would send. The requested host lives in the `host` and `x-forwarded-host`
+headers, and on Vercel the platform's proxy sets both, overwriting anything a client supplies.
+
+Same defect class as §9's tenant bundling and the publish-gate fault recorded in the OpenClaw
+workspace: **a gate whose input is not the thing it claims to inspect.** The corrected version
+requires every host the request claims to be loopback, so a spoofed `Host: localhost` paired
+with a real `x-forwarded-host` is refused too, and it refuses outright whenever
+`process.env.VERCEL` is set — two independent signals, because a project can be configured not
+to expose system environment variables and the header check has to stand alone in that case.
+
+Verified live against `next dev`: local `localhost` and `127.0.0.1` serve 200; `example.com`,
+both `*.vercel.app` names, a LAN address, and the spoofed-`Host` combination all return 404 on
+both the page and the API, GET and POST; `/` and `/api/health` are untouched.
+
+**Not fixed here, and not caused here:** `npm test` cannot pass on this machine. The
+`search-router/seyu-search-router` suite dies with `ERR_MODULE_NOT_FOUND` for
+`@modelcontextprotocol/sdk/dist/esm/shared/mediaType.js` — the installed SDK's own
+`streamableHttp.js` imports a file its build does not contain. Confirmed pre-existing by
+running that suite with `middleware.ts` removed: identical failure. The six repo-level gates
+(`verify-schema-mapper`, `verify-cron-generator`, `verify-runtime`, `verify-prompt-parity`,
+`verify-runners`, `cron-generator --check`) all pass.
