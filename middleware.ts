@@ -32,9 +32,33 @@ import type { NextRequest } from "next/server"
  * header can forge it -- but a project can be configured not to expose system environment
  * variables, so it may be absent. The header check stands alone in that case, and also
  * covers hosting that is not Vercel. Either signal saying "not local" refuses.
+ *
+ * THE HOST CHECK DOES NOT STOP THE OWNER'S OWN BROWSER. Found by adversarial review on
+ * 2026-09-08 and reproduced: a hostile web page open in the same browser as this admin page
+ * can make that browser POST to http://localhost:3000/api/openclaw/run. The browser sends
+ * `Host: localhost:3000` -- it is addressing localhost -- so the host check passes by
+ * construction. No CORS preflight is needed: `text/plain` is a CORS-safelisted content type
+ * and `req.json()` parses the body regardless of the declared type, so the request goes out,
+ * the task runs, and the attacker never needs to read the response. The task ids, including
+ * the two that write to live customer databases and the confirm token that equals the id,
+ * are public in this public repository. Binding the server to 127.0.0.1 does nothing here:
+ * the request comes FROM this machine.
+ *
+ * So a state-changing request must also prove WHERE it came from, using the two headers a
+ * browser sets and a page cannot forge or suppress: `Origin` must be a loopback origin, and
+ * `Sec-Fetch-Site` must be same-origin (or `none`, a typed URL). A third gate for browsers
+ * old enough to send neither: a non-GET request must declare `application/json`, which a
+ * cross-site page cannot send without a preflight, and no OPTIONS handler here grants one.
+ * GET and HEAD are exempt on purpose -- they change nothing, a cross-site page cannot read
+ * their response without CORS, and refusing them would break the owner clicking a link to
+ * this page from a chat message (that navigation arrives as `Sec-Fetch-Site: cross-site`).
+ * A plain `curl` with no browser headers still passes, which is what the operator checks
+ * and the workspace's own scripts use.
  */
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1", "[::1]"])
+// Methods with no side effects. Everything else must prove it came from this page.
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
 
 /** The host without its port. IPv6 literals keep their brackets, which is how they arrive. */
 function hostname(value: string): string {
@@ -59,6 +83,31 @@ export function middleware(req: NextRequest) {
   )
   if (claimed.length === 0 || !claimed.every((v) => LOCAL_HOSTS.has(hostname(v)))) {
     return new NextResponse(null, { status: 404 })
+  }
+
+  // Provenance, for anything that can change state. See the header comment: the Host
+  // check is satisfied by the victim's own browser, so a write must also come from this
+  // page. Each of the three gates alone closes the browser path; they are independent
+  // so that an old browser, a new browser and a misconfigured one are each refused.
+  if (!SAFE_METHODS.has(req.method)) {
+    const origin = req.headers.get("origin")
+    if (origin !== null) {
+      let local = false
+      try {
+        local = origin !== "null" && LOCAL_HOSTS.has(hostname(new URL(origin).host))
+      } catch {
+        local = false
+      }
+      if (!local) return new NextResponse(null, { status: 404 })
+    }
+    const site = req.headers.get("sec-fetch-site")
+    if (site !== null && site !== "same-origin" && site !== "none") {
+      return new NextResponse(null, { status: 404 })
+    }
+    const type = (req.headers.get("content-type") ?? "").toLowerCase()
+    if (!type.startsWith("application/json")) {
+      return new NextResponse(null, { status: 415 })
+    }
   }
 
   return NextResponse.next()
