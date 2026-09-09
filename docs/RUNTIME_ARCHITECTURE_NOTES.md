@@ -1295,3 +1295,50 @@ exist in the install, and do the manifests disagree?* They did not disagree, so 
 wrong with what was requested, only with what arrived. A missing file inside `node_modules`
 with consistent manifests means reinstall, and `npm ci` is the reinstall that cannot
 silently change what you asked for.
+
+## 22. The host check stopped the network and not the browser: CSRF against the admin page (2026-09-08)
+
+Section 21 made `/openclaw` and `/api/openclaw/*` refuse any request whose `Host` header was
+not loopback, and the service that now runs the page (`ai.openclaw.admin`, see the OpenClaw
+`RUNBOOK.md` §11) binds 127.0.0.1. Both hold. Adversarial review the same evening reproduced,
+twice and independently, what neither touches: **a hostile website open in the owner's own
+browser can make that browser POST to `http://localhost:3000/api/openclaw/run`, and the task
+runs.** The browser is addressing localhost, so it sends `Host: localhost:3000` and the host
+check passes by construction. No CORS preflight is involved: `text/plain` is a CORS-safelisted
+content type, and `req.json()` parses the body regardless of the declared type. The response is
+opaque to the attacker, but the side effect does not need a readable response. The task ids —
+including `retract-apply` and `purge-apply`, which write to live customer databases — and the
+confirm token that equals the id are public in this public repository. Binding to 127.0.0.1 is
+irrelevant to this: the request comes *from* this machine.
+
+Reproduced read-only, against the `status` task only, with the exact headers a browser sends
+for a cross-site `no-cors` fetch, and again as an `enctype=text/plain` form submission that
+needs no JavaScript at all. Both returned 200 with the task's real output.
+
+**The fix is provenance, not a stronger host check.** A state-changing request must also show
+where it came from, using the headers a browser sets and a page cannot forge or suppress:
+
+- `Origin` must be a loopback origin (and never `null`);
+- `Sec-Fetch-Site` must be `same-origin` or `none` (a typed URL);
+- the body must declare `application/json`, which a cross-site page cannot send without a
+  preflight, and no OPTIONS handler here grants one.
+
+Three independent gates, so an old browser without `Sec-Fetch-*`, a new one, and a
+misconfigured one are each refused. **GET and HEAD are exempt on purpose**: they change
+nothing, their response is unreadable cross-site, and refusing them would break the owner
+clicking a link to this page from a chat message — that navigation arrives as
+`Sec-Fetch-Site: cross-site`. A plain `curl` with no browser headers still passes, which is
+what the operator and the OpenClaw workspace's own checks use.
+
+Verified against the live service: the reproduced fetch, the form submission, an
+Origin-only old-browser request, an Origin-less `text/plain` request (415, the content-type
+gate), `Origin: null`, a same-site subdomain, and DNS rebinding are refused; the page's own
+same-origin JSON fetch, plain `curl` with JSON, the GET task table, a cross-site link click
+and a typed URL all pass. `tsc` clean, `npm test` 42/42.
+
+**The general lesson, same as §21's:** each guard answered the question it was written for and
+was read as answering a larger one. The host check answers "is this request addressed to
+me?"; it was described as answering "who is asking?". The bind answers "can the network reach
+me?"; it was described as "only this machine can reach it", which is true and is exactly the
+attacker's position. An admin surface reachable by a browser has to ask the browser where the
+request came from, and the browser will tell it.
