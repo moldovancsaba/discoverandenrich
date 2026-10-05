@@ -22,3 +22,7 @@ tsconfig.tsbuildinfo
 
 # local agent tooling, not part of the app
 .claude/
+
+# OS noise and generated run records (earlier tracked run records stay tracked)
+.DS_Store
+runs/cogmap-enrich-run-*.json
