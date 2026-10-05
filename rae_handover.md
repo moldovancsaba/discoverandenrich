@@ -1,5 +1,11 @@
 # researchandenrich — operational handover
 
+> **Dated snapshot (2026-08-13), superseded as the entry point by [HANDOVER.md](HANDOVER.md) (2026-10-05).**
+> Where they disagree, HANDOVER.md wins. Known stale here: the `Agents/contentcreator` symlinks into this
+> repo (removed 2026-09-01 per the OpenClaw workspace `SSOT.md`), the commit hash `6195129` (not in this
+> repository's history), the claim that env files are tracked in `HEAD`, and the folder name
+> `/Users/Shared/Projects/researchandenrich` (now `discoverandenrich`).
+
 **Read this first.** This is the single entry point for anyone (human or agent) picking up this repo —
 what it is, what's actually running today, how config/credentials work, and where the deeper reference
 docs live. `README.md` has more onboarding detail, `docs/LLD.md` has module-by-module internals,

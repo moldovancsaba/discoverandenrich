@@ -1,6 +1,8 @@
 # ContentCreator Agent Runtime
 
-Agent runtime for ContentCreator — unified lead and program research service. Serves four tenants across two apps: cogmap/seyu/dvsc (the `researchandenrich` app, sales-lead-api schemaFamily, writing into salesleadgenerator) and classscout (its own app, program-api schemaFamily, writing into classscout.ai's real provider catalog via `POST /api/ingest`). Each tenant runs as a fixed-tenant cron job — one tenant per run, no round-robin state, per the Fixed-Tenant Contract embedded in every prompt file.
+Agent runtime for ContentCreator — unified lead and program research service. Serves four tenants across two apps: cogmap/seyu/dvsc (the `salesleadgenerator` app in `apps.yaml`, sales-lead-api schemaFamily, writing into salesleadgenerator) and classscout (its own app, program-api schemaFamily, writing into classscout.ai's real provider catalog via `POST /api/ingest`). Each tenant runs as a fixed-tenant cron job — one tenant per run, no round-robin state, per the Fixed-Tenant Contract embedded in every prompt file.
+
+Current state, what runs where today, and a first-hour checklist: [HANDOVER.md](HANDOVER.md). Documents under `docs/` are listed in [docs/INDEX.md](docs/INDEX.md).
 
 ## Repo Layout
 
@@ -9,10 +11,15 @@ Agent runtime for ContentCreator — unified lead and program research service. 
 │   │                              dashboard was removed" below)
 │   ├── layout.tsx                <- root layout
 │   ├── page.tsx                  <- static landing page (no admin UI)
+│   ├── openclaw/page.tsx         <- local-only OpenClaw admin page (see "/openclaw is
+│   │                                local-only" below)
 │   └── api/                      <- API routes
 │       ├── health/route.ts
-│       └── leads/route.ts        <- local stub/mock only -- the real leads API this
-│                                     pipeline writes to lives in salesleadgenerator
+│       ├── leads/route.ts        <- local stub/mock only -- the real leads API this
+│       │                             pipeline writes to lives in salesleadgenerator
+│       └── openclaw/*/route.ts   <- local-only, backs the page above
+├── lib/                       <- openclaw.ts, tasks.ts: what the /openclaw page reads and runs
+├── middleware.ts              <- refuses /openclaw and /api/openclaw/* off this machine
 ├── prompts/                   <- prompt files (discovery/enrichment), OpenClaw-format
 │   ├── discovery/
 │   └── enrichment/
@@ -34,8 +41,10 @@ Agent runtime for ContentCreator — unified lead and program research service. 
 │   ├── healthcheck.yaml          <- health-check endpoint defaults
 │   └── retry-policy.yaml         <- global retry/timeout/logging defaults
 ├── scripts/
-│   ├── verify-schema-mapper.js   <- schema-mapper.js regression check (no test
-│   │                                 framework configured in package.json)
+│   ├── verify-schema-mapper.js   <- schema-mapper.js regression check; `npm test` runs it
+│   │                                 with the other verify-*.js suites, the search-router
+│   │                                 tests and `config/cron-generator.js --check`
+│   ├── audit-gate.js             <- `npm run audit`: dependency advisories, with a baseline
 │   ├── check-tenant-status-diff.js <- CI guard: at most one tenant's status/enabled
 │   │                                 change per commit (issue #6)
 │   ├── test-classscout-live.js   <- live health/dry-run/live integration test against
@@ -54,7 +63,10 @@ Agent runtime for ContentCreator — unified lead and program research service. 
 │                                  MCP stdio server (separate integration path from the
 │                                  OpenClaw prompts' own hardcoded AgentFinder invocation)
 ├── vercel.json                <- Vercel config (empty, auto-detects Next.js)
-└── .env.cogmap / .env.seyu / .env.dvsc / .env.classscout  <- gitignored credential files
+├── .env.example               <- variable NAMES only (no values)
+└── .env.cogmap / .env.seyu / .env.dvsc / .env.classscout  <- gitignored credential files;
+                                   normally kept outside the clone in $RAE_ENV_DIR
+                                   (prompts/RUNTIME_PATHS.md); none are in this repo
 ```
 
 classscout's real target API (`POST /api/ingest`, the `Provider` Zod schema)
@@ -115,7 +127,9 @@ tenant-specific instructions elsewhere:
 6. Use the search router (`search-router/seyu-search-router`) per each
    prompt's "Search/router usage" section instead of ad-hoc web search.
    Run `npm install` inside `search-router/seyu-search-router/` first if
-   it hasn't been installed yet (its `node_modules` is gitignored).
+   it hasn't been installed yet (its `node_modules/` matches `.gitignore`, but a
+   copy was committed in the repo's root commit and is tracked, so a fresh clone
+   already has one; CI still runs `npm ci` there).
 7. `config/cron.yaml` is generated, not hand-edited. If a tenant's schedule
    or enabled flags change, edit `tenants.json` / `workers/<tenantId>/*.yaml`
    and re-run `node config/cron-generator.js`.
@@ -158,7 +172,7 @@ actual code change — see `docs/RUNTIME_ARCHITECTURE_NOTES.md` §4a for how
 its `tenants.json` entry uses `"schemaFamily": "program-api"` (no
 `forecastModel`; that field is sales-lead-api-only) and its own `classscout`
 app entry in `apps.yaml` (a separate app, not a tenant of the
-`researchandenrich` app — it targets a structurally different API). Two
+`salesleadgenerator` app — it targets a structurally different API). Two
 things are genuinely different from every sales-lead-api tenant, and matter
 if you're onboarding a further program-api-family tenant later:
 - classscout has **one** write endpoint (`POST /api/ingest`) for both create
@@ -183,9 +197,9 @@ rewrite against classscout's actual `POST /api/ingest` contract and its
 Schema" sections of `prompts/discovery/classscout.md` for the specifics
 (category is the program FORMAT not the subject, ageRanges uses an en dash,
 `image`/`website` are hard-required with no image-optional path). classscout
-ships **paused** like `dvsc` did — real `INGEST_API_KEY`/`IMGBB_API_KEY`
-credentials are needed in `.env.classscout` before either `enabled` flag can
-flip to `true`.
+shipped **paused** like `dvsc` did — real `INGEST_API_KEY`/`IMGBB_API_KEY`
+credentials were needed in `.env.classscout` before either `enabled` flag could
+flip to `true` (it is live now, see Per-Tenant Toggles below).
 
 ## Per-Tenant Toggles
 
@@ -235,6 +249,8 @@ the repo owner confirmed that pause was unintended. See
 `docs/RUNTIME_ARCHITECTURE_NOTES.md` for the full incident.
 
 The cron-generator reads these flags to include/exclude operations in the cron schedule.
+They drive `config/cron.yaml` only: the OpenClaw install keeps its own job switchboard
+(`jobs.json` in its workspace), see `HANDOVER.md`.
 
 ## Deployment
 
