@@ -23,7 +23,7 @@ const WORK_LINK: Record<string, { href: string; label: string }> = {
   "cogmap-duplicates": { href: "https://salesleadgenerator.vercel.app/admin/duplicates", label: "cogmap duplicates" },
   "seyu-duplicates": { href: "https://salesleadgenerator.vercel.app/admin/duplicates", label: "seyu duplicates" },
   "NYC-duplicates": { href: "https://classscout.ai/nyc", label: "classscout NYC" },
-  "padel-africa-fabricated-urls": { href: "https://racket.land/", label: "Racket Land" },
+  "racket-land-fabricated-urls": { href: "https://racket.land/", label: "Racket Land" },
 }
 type Snapshot = {
   workspace: string
